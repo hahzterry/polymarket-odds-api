@@ -2,25 +2,25 @@
  * polymarket-odds-api — Arc Edition
  *
  * Pay-per-call Polymarket odds API using Circle's x402 nanopayments on Arc.
- * Callers pay $0.001 USDC on Arc (eip155:5042002). No gas fees.
+ * Callers pay $0.001 USDC on Arc (eip155:5042). No gas fees.
  *
  * Stack:
  *   - @circle-fin/x402-batching/server  → BatchFacilitatorClient (Circle Gateway)
- *   - Arc Testnet (eip155:5042002)      → Circle's own L1
+ *   - Arc Mainnet (eip155:5042)         → Circle's own L1
  *   - USDC on Arc                       → 0x3600...0000
  */
 
 import express from "express";
 import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
 
-// ── Arc Testnet constants (from Circle's arc-nanopayments SDK) ───────────────
-const ARC_NETWORK          = "eip155:5042002";
-const ARC_USDC_CONTRACT    = "0x3600000000000000000000000000000000000000";
-const ARC_GATEWAY_WALLET   = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+// ── Arc Mainnet constants ─────────────────────────────────────────────────────
+const ARC_NETWORK          = "eip155:5042"; // Changed from Testnet (5042002) to Mainnet (5042) [citation:4]
+const ARC_USDC_CONTRACT    = "0x3600000000000000000000000000000000000000"; // Same on Mainnet [citation:4][citation:5]
+const ARC_GATEWAY_WALLET   = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9"; // Verify this address for Mainnet if different
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const PORT           = process.env.PORT || 4021;
-const SELLER_ADDRESS = (process.env.SELLER_ADDRESS || "0x3007e7f816469c0c2555f91973f0c2a785c93757");
+const SELLER_ADDRESS = (process.env.SELLER_ADDRESS || "0xYOUR_ARC_MAINNET_SELLER_ADDRESS"); // MUST replace this [citation:18]
 const PRICE          = "$0.001";
 
 // Parse "$0.001" → USDC atomic units (6 decimals) → "1000"
@@ -29,6 +29,7 @@ function toUSDCAtoms(dollarStr) {
 }
 
 // ── Circle Gateway facilitator (settles on Arc, zero gas) ────────────────────
+// The facilitator client automatically uses the Mainnet Gateway API [citation:1][citation:16].
 const facilitator = new BatchFacilitatorClient();
 
 // ── Payment requirements for a protected route ───────────────────────────────
@@ -39,7 +40,7 @@ function buildPaymentRequirements(price = PRICE) {
     asset:             ARC_USDC_CONTRACT,
     amount:            toUSDCAtoms(price),
     payTo:             SELLER_ADDRESS,
-    maxTimeoutSeconds: 345600,           // 4 days — Circle Gateway batches within this
+    maxTimeoutSeconds: 345600, // 4 days — Circle Gateway batches within this
     extra: {
       name:              "GatewayWalletBatched",
       version:           "1",
@@ -49,14 +50,10 @@ function buildPaymentRequirements(price = PRICE) {
 }
 
 // ── x402 middleware ───────────────────────────────────────────────────────────
-// Implements the full x402 handshake:
-//   1. No payment header → return HTTP 402 with payment requirements
-//   2. Payment header present → verify with Circle Gateway → allow or reject
 async function x402Gate(req, res, next) {
   const paymentHeader = req.headers["x-payment"];
 
   if (!paymentHeader) {
-    // Step 1: Return 402 with payment details
     const requirements = buildPaymentRequirements();
     return res.status(402).json({
       x402Version: 1,
@@ -65,7 +62,6 @@ async function x402Gate(req, res, next) {
     });
   }
 
-  // Step 2: Verify payment with Circle Gateway
   try {
     let paymentPayload;
     try {
@@ -87,9 +83,7 @@ async function x402Gate(req, res, next) {
       });
     }
 
-    // Settle (batch on-chain via Circle Gateway)
     await facilitator.settle(paymentPayload, requirements);
-
     next();
   } catch (err) {
     console.error("[x402] Verification error:", err.message);
@@ -159,7 +153,7 @@ app.get("/", (_req, res) => {
     version:     "2.0.0",
     seller:      SELLER_ADDRESS,
     network:     ARC_NETWORK,
-    network_name:"Arc Testnet",
+    network_name:"Arc Mainnet",
     usdc:        ARC_USDC_CONTRACT,
     pricing:     PRICE + " USDC per call (gasless on Arc)",
     gateway:     "Circle Gateway — batched settlement on Arc",
@@ -219,7 +213,7 @@ app.listen(PORT, "0.0.0.0", () => {
 ╠══════════════════════════════════════════════════════════════╣
 ║  Server:   http://localhost:${PORT}                              ║
 ║  Seller:   ${SELLER_ADDRESS.slice(0,22)}...        ║
-║  Network:  Arc Testnet  (${ARC_NETWORK})          ║
+║  Network:  Arc Mainnet  (${ARC_NETWORK})           ║
 ║  USDC:     ${ARC_USDC_CONTRACT.slice(0,22)}...        ║
 ║  Price:    ${PRICE} USDC per call (gasless)            ║
 ║  Gateway:  Circle Gateway (batched Arc settlement)           ║
